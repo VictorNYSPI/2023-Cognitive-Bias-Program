@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>"Personalised Image Selection"</title>
+    <meta name="description" content="">
+    <meta name="viewport" content="width=device-width">
+    <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/2.1.0/jquery.min.js"></script>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+</head>
+<!--
+    ***DESCRIPTION***
+-->
+<body>
+    <!--Window for interaction-->
+    <div id="ratingDisplay">
+        <h2 style="color: red; padding-left: 45vw; padding-top: 50vh;">Select the appropriate image file.</h2>
+        <input type="file" id="fileInput" style="padding-left: 45vw;"/>
+    </div>
+    <script>       
+        function readyPanel(newInputs=false, conditionInstructionText="") {
+            /*
+                Instantiates a canvas with width and height equal to the viewer window, ready to be written to by D3 methods.
+            */
+            $("#ratingDisplay").html("");
+
+            panel = d3.select("#ratingDisplay")
+                .append("svg")
+                .attr("id", "panel")
+                .attr("height", windowHeight)
+                .attr("width", windowWidth);
+
+            if (newInputs) {
+                d3.select("#ratingDisplay")
+                    .append("html")
+                    .html("<div id='ratingInstructions'>");
+
+                instruct(conditionInstructionText, null, x=windowWidth/2, y=windowHeight*0.9);
+
+                d3.select("#ratingDisplay")
+                    .append("html")
+                    .html("<div id='ratingInput'>");
+
+                d3.select("#ratingInput")
+                    .style("margin", "auto")
+                    .style("width", "50%");
+
+                d3.select("#ratingInput")
+                    .append("text")
+                    .text("Not much")
+                    .style("float", "left");
+
+                d3.select("#ratingInput")
+                    .append("html")
+                    .html(sliderHTML);
+
+                d3.select("#ratingSlider")
+                    .style("width", "60%")
+                    .style("float", "left");
+
+                d3.select("#ratingInput")
+                    .append("text")
+                    .text("A lot")
+                    .style("float", "left");
+
+                d3.select("#ratingInput")
+                    .append("html")
+                    .html(buttonHTML);
+
+                d3.select("#ratingButton")
+                    .style("width", "20%")
+                    .style("float", "right");
+            };
+        }
+        
+        function randomiseOrder(unshuffledArray) {
+        /*
+            Shuffles an returns an array passed as an argument.
+
+            Takes a random index of the unshuffled array n times (where n is the number of objects in the array) and
+            appends the tuple at that index of `unshuffledArray` to `shuffledArray`.
+        */
+            // Instantiated here, as the length of `orientations` will change
+            var maxIter = unshuffledArray.length;
+
+            var shuffledArray = [];
+
+            for (var i = 0; i < maxIter; i ++) {
+                // `rand` is an integer between 0 and the original length of `orientations`, minus 1
+                rand = Math.floor(Math.random() * unshuffledArray.length);
+
+                shuffledArray[i] = unshuffledArray[rand];
+
+                // Reinstantiate `orientations` as itself, sans the tuple at index `rand`
+                unshuffledArray = [...unshuffledArray.slice(0, rand), ...unshuffledArray.slice(rand + 1, unshuffledArray.length)];
+            }
+
+            return shuffledArray;
+        }
+
+        function instruct(instruction, instructionText=null, x=windowWidth/2, y=windowHeight/1.5) {//***
+            textItr = 0;
+            if (instructionText != null) {
+                var instructionTextArray = instructionText.split(/\s+/);
+                var textIter = 0;
+                var text = "";
+                for (i=0, l=instructionTextArray.length; i<l; i++) {
+                    text = text + instructionTextArray[i] + " ";
+                    
+                    if (text.length > 50 || i == l-1) {
+                        panel.append("text")
+                            .text(text)
+                            .style("font-family", "sans-serif")
+                            .attr("text-anchor", "middle")
+                            .style("font-size", "1vw")
+                            .style("fill", "black")
+                            .attr("x", x)
+                            .attr("y", y + (20 * textItr));
+                            //.attr("dy", y + (16 * textItr));
+                        
+                        textItr++;
+                        text = "";
+                    };
+                };
+            };
+            
+            panel.append("text")
+                .text(instruction)
+                .style("font-family", "sans-serif")
+                .attr("text-anchor", "middle")
+                .style("font-size", "1vw")
+                .style("fill", "black")
+                .attr("x", x)
+                .attr("y", y + (24 * textItr));
+                //.attr("dy", y + (16 * textItr));
+        };
+
+        function presentImage(image) {
+            panel.append("image")
+                .attr("class", "presentation")
+                .attr("xlink:href", image)
+                .attr("y", 0)//windowHeight / 2 - imageHeight / 1.5)
+                .attr("x", windowWidth / 2 - imageWidth / 2)
+                .attr("height", imageHeight)
+                .attr("width", imageWidth); 
+        };
+
+        function stackResponse(image, rating) {                
+            if (ratings.length < nImages) { // just append if fewer than required number of images currently on the stack
+                ratings = [...ratings, {"image": image, "rating": rating}];
+            } else {
+                let minIndx = 0; // inititially treat the oldest image on the stack as the lowest-rated
+
+                for (i=1; i<ratings.length; i++) { // iterate through newer images
+                    if (parseInt(ratings[i].rating) < parseInt(ratings[minIndx].rating)) {
+                        minIndx = i; // reasign minima as encountered
+                    };
+                }
+
+                if (rating >= parseInt(ratings[minIndx].rating)) { // if the new rating is higher than or equal to the minima
+                    ratings.splice(minIndx, 1); // remove the minima from the stack
+
+                    ratings = [...ratings, {"image": image, "rating": rating}]; // append the new rating to the end of the stack
+                };
+            };
+        };
+
+        function writeOutputs(results) {
+            var jsonString = "{\"ratings\":[";
+
+            for (i=0; i<results.length; i++) {
+                if (i > 0) {
+                    jsonString += ",";
+                }
+
+                jsonString += "{\"" + results[i].image + "\":";
+
+                jsonString += results[i].rating;
+
+                jsonString += "}";
+            }
+
+            jsonString += "]}";
+
+            return jsonString;
+        };
+
+        function download(filename, text) {
+            var element = document.createElement('a');
+
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+
+            element.style.display = 'none';
+            document.body.appendChild(element);
+
+            element.click();
+
+            document.body.removeChild(element);
+        };
+
+        var panel;
+
+        var windowHeight = $(window).height() * 0.75,
+            windowWidth = $(window).width();
+
+        var id,
+            condition,
+            images;
+
+        var instruction = "Press the spacebar when you're ready.";
+
+        var instructing = true;
+        var rating = false;
+
+        var iter = 0;
+
+        var nImages = 10; //***
+
+        var imageHeight = windowHeight / 1.25,
+            imageWidth = windowWidth / 1.25;
+
+        var presentation;
+
+        var ratings = [];
+
+        var buttonHTML = "<input type='button' id='ratingButton' value='Rate'>",
+            sliderHTML = "<input type='range' id='ratingSlider' min='1' max='100' value='50'>";
+
+        var completionText = "You're all done. Feel free to close this.";
+
+        $(document).ready(function() {
+            $('#fileInput').on('change', function () {
+                var fileReader = new FileReader();
+                
+                fileReader.readAsText($('#fileInput').prop('files')[0]);
+                
+                condition = $('#fileInput').prop('files')[0].name.slice(0, $('#fileInput').prop('files')[0].name.indexOf('_'));
+
+		var conditionInstructionText,
+            instructionText;
+                
+		switch (condition) {
+			case 'negative':
+				conditionInstructionText = "How much does this image remind you of the times you've used this substance?";
+				instructionText = "You will be shown a sequence of substance-related images and be asked to 'rate' them according to the extent that they remind you of times that you have previously used that substance.";
+                
+				break;
+			case 'positive':
+				conditionInstructionText = "How much does this image remind you of your goals, things you enjoy, or things you would like to spend more time doing?";
+				instructionText = "You will be shown a sequence of positive images and be asked to 'rate' them according to the extent that they remind you of your goals, things you enjoy, or things you would like to spend more time doing.";
+                
+				break;
+		};
+                
+                fileReader.onload = function () {
+                    var data = fileReader.result;  // data <-- in this var you have the file data in Base64 format
+                    
+                    images = JSON.parse(data)[0];
+                    hold_outs = JSON.parse(data)[1];
+                    
+                    images = randomiseOrder(images);
+                };
+                                            
+                readyPanel();
+
+                instruct(instruction, instructionText);
+
+                id = window.prompt("Please enter the participant identification number:");
+
+                $(document).keypress(function(key) {
+                    if (key.which === 32 && instructing) { // 32 == spacebar
+                        instructing = false;
+                        rating = true;
+
+                        readyPanel(newInputs=true, conditionInstructionText=conditionInstructionText);
+
+                        presentImage(images[iter]);
+
+                        d3.select("#ratingButton").on("click", function() {
+                            if (rating) {
+                                if (!hold_outs.includes(images[iter])) { // Only records responses for non-hold out images
+                                    stackResponse(images[iter], document.getElementById("ratingSlider").value);
+                                };
+
+                                d3.selectAll(".presentation").remove();
+
+                                document.getElementById("ratingSlider")
+                                    .value = 50;
+
+                                iter ++;
+                                presentImage(images[iter]);
+                            };
+
+                            if (iter === images.length) {
+                                if (window.confirm("Save output.")){
+                                    download(id + "_" + condition + "_" + "ratings.txt", writeOutputs(ratings));
+
+                                    // kill everything other than a completion message
+                                    readyPanel();
+                                    instruct(completionText);
+                                };
+                            };
+                        });
+                    };
+                });
+            });
+        });
+    </script>
+</body>
+</html>

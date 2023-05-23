@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <title>"Personalised Joystick CBM"</title>
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width">
+        <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/2.1.0/jquery.min.js"></script>
+        <script src="https://d3js.org/d3.v5.min.js"></script>
+    </head>
+    <!--
+        This cognitive bias modification program should run in Chrome, Firefox, and Edge.
+        Please make sure that the only gamepad-type device that is plugged in is the joystick that you'd like to use.
+
+        For the sake of legibility, variable names in comments are surrounded with backticks, e.g., `variable`.
+
+        Authored by: Samuel Campbell (sam.campbell@monash.edu)
+        Last edited: 07/01/2019
+    -->
+    <body>
+    <!Windows for instructions and interaction>
+    <div id="joyPrompt">
+        <input type="file" id="imageInput">    
+    </div> 
+    <div id="joyDisplay"></div>
+    <script>
+        function canJoy() {
+        /*
+            Convenience function, returns true if a gamepad is detected by the browser API.
+        */
+            return "getGamepads" in navigator;
+        }
+        
+        function duplicateImages(imgs) {
+            for (var i=0; i<imgs.length; i++) {
+                var t_img_list = imgs[i];
+                for (var y=0; y<nDupes; y++) {
+                    imgs[i] = [...imgs[i], ...t_img_list];
+                }
+            }
+            
+            return imgs;
+        }
+
+        function setOrder(fiftyFifty=true) {
+        /*
+            Reassigns `orientations`, setting it to be a predictable sequence of tuples based on the value of `binRange`.
+
+            Iterates through the potential stimulus types, where 0 is neutral and 1 is non-neutral. For each,
+            loops over `orientIter`, which decriments from 1 to 0, taking the absolute value of `stimType` subtracted from `orientIter`,
+            resulting in `stimOrient` being 0 (for landscape) or 1 (for portrait). This is then appended to `orientations`.
+
+            Written this way to allow for expansion later down the line.
+        */
+        var bins = fiftyFifty ? [binRange/2, binRange/2] : [binRange, 0];
+
+            // `stimType` is the type of the stimulus: neutral (0) or non-neutral (1) 
+            for (var stimType = 0; stimType < 2; stimType ++) {
+                for (var orientIter = 1; orientIter > -1; orientIter --) {
+                    // `stimOrient` is the orientation of the stimulus: landscape (0) or portrait (1)
+                    var stimOrient = Math.abs(orientIter - stimType);
+
+                    for (var dummyIter = 0; dummyIter < bins[orientIter]; dummyIter ++) {
+                        orientations = [...orientations, [stimType, stimOrient]];
+                    }
+                }
+            }
+        }
+
+        function randomiseOrder(unshuffledArray) {
+        /*
+            Shuffles an returns an array passed as an argument.
+
+            Used to populate `orderedOrientations` and `orderedImages` with a random permutation of `orientations` and `images`, respectively.
+
+            Takes a random index of the unshuffled array n times (where n is the number of objects in the array) and
+            appends the tuple at that index of `unshuffledArray` to `shuffledArray`.
+        */
+            // Instantiated here, as the length of `orientations` will change
+            var maxIter = unshuffledArray.length;
+
+            var shuffledArray = [];
+
+            for (var i = 0; i < maxIter; i ++) {
+                // `rand` is an integer between 0 and the original length of `orientations`, minus 1
+                rand = Math.floor(Math.random() * unshuffledArray.length);
+
+                shuffledArray[i] = unshuffledArray[rand];
+
+                // Reinstantiate `orientations` as itself, sans the tuple at index `rand`
+                unshuffledArray = [...unshuffledArray.slice(0, rand), ...unshuffledArray.slice(rand + 1, unshuffledArray.length)];
+            }
+
+            return shuffledArray;
+        }
+        
+        //*** addition for AAT
+        function addReversedBlock() {
+            orderedOrientations = [...orderedOrientations, ...orderedOrientations];
+            
+            console.log("here it is:");
+            console.log(orderedOrientations[orderedOrientations.length/2]);
+            console.log(orderedOrientations.length/2);
+            console.log(orderedOrientations[orderedOrientations.length/2][0]);
+            console.log(orderedOrientations[orderedOrientations.length/2][1]);
+            
+            for (var oLen=orderedOrientations.length, i=oLen/2; i<oLen; i++) {
+                if (orderedOrientations[i][1] == 0) {
+                    orderedOrientations[i][1] = 1;
+                } else {
+                    orderedOrientations[i][1] = 0;
+                }
+                
+                /*switch(orderedOrientations[i][1]) {
+                    case 0:
+                        orderedOrientations[i][1] = 1;
+                        break;
+                    case 1:
+                        orderedOrientations[i][1] = 0;
+                        break;
+                }*/
+            }
+        }
+
+        function sleep(milliseconds) {
+        /*
+            Delays further computations for a declared number of `milliseconds`.
+        */
+            var start = new Date().getTime();
+            for (var i = 0; i < 1e7; i++) {
+                if ((new Date().getTime() - start) > milliseconds){
+                    break;
+                }
+            }
+        }
+
+        function fixPreambleBackup() {
+        /*
+            Decrements `backupPreambleIndex` by 1 if the user has paged back during the preamble instructions.
+        */
+            if (backupPreambleIndex === preambleIndex) {
+                backupPreambleIndex --;
+            }
+        }
+
+        function checkPreamble() {
+        /*
+            Convenience function, returns true if `preambleIndex` is at a value where limited graphical processing is necessary 
+            (i.e., during the non-interactive portion of the preamble).
+        */
+            return preambleIndex < 5 || preambleIndex === 13;
+        }
+
+        function checkPreambleTrials() {
+        /*
+            Convenience function, returns true if `preambleIndex` is at a value requiring D3 to print images to the window
+            (i.e., the interactive portion of the preamble).
+        */
+            return preambleIndex > 4 && preambleIndex < 13;
+        }
+
+        function listenForKeys() {
+        /*
+            Instantiates an eventListener during the non-interactive portion of the preamble that is triggered by the user hitting the space or delete keys.
+
+            When triggered by the space key (and if appropriate), sets `preamble` at the current index to true,
+            then increments `preambleIndex` and `backupPreambleIndex`.
+                - This 'pages through' the preamble.
+
+            When triggered by the delete key (and if appropriate), sets `preambleIndex` to the value of `backupPreambleIndex`,
+            then sets the previous index of `preamble` to false.
+                - This 'returns' to the previous 'screen' of the preamble.
+        */
+            if (checkPreamble()) {
+                document.addEventListener('keyup', (event) => {
+                    var keyName = event.key;
+
+                    // The space key is a single whitespace character, to this API
+                    if (keyName === " ") {
+                        preamble[preambleIndex] = true;
+
+                        // Start the reaction timer for the first presentation
+                        if (preambleIndex === 13) {
+                            joyTimer = performance.now();
+                        }
+                    // Checking that the current preamble 'screen' is one in which 'going back' is a valid and permissible action
+                    } else if (preambleIndex > 1 && preambleIndex < 5 && keyName === "Delete") {
+                        preambleIndex = backupPreambleIndex;
+                        preamble[backupPreambleIndex] = false;
+                        return;
+                    }
+                }, {once: true});
+
+                if (preamble[preambleIndex]) {
+                    backupPreambleIndex = preambleIndex;
+                    preambleIndex ++;
+                }
+            }
+        }
+
+        function getVariables() {
+        /*
+            Populates the variables used in this program.
+
+            For further explanation of how the variables are used, please see below, where they are declared.
+        */
+            // Sets `joy` to the first gamepad found
+            joy = navigator.getGamepads()[0];
+            // Populates `witty` and `hitty` with 98% of the width and height of the viewer window, respectively
+            witty = $(window).width() * 0.98;
+            hitty = $(window).height() * 0.98;
+
+            // `extension` is set to 0 during the preamble, because the example frames/borders are plotted using the same process as that used during the trials 
+            if (checkPreamble()) {
+                extension = 0;
+            } else {
+                // Depending on `condition`, populates sets `extension` to be the first/left-right (for the control condition) or second/forward-back (for the exprimental condition) axis of `joy`
+                extension = joy.axes[condition] * extensionAdjustment;
+            }
+
+            // Plots the frames/image borders and the images they contain appropriately, based on `condition` the orientation specified in each `orderedOrientation` tuple
+            // Experimental condition
+            if (condition === 1) {
+                if (orderedOrientations[index][1] === 0) {
+                    // Landscape
+                    imgWidth = (witty / 2) * (1 - (-1 * extension));
+                    imgHeight = imgWidth * 0.5;            		
+                } else {
+                    // Portrait
+                    imgHeight = (hitty / 2) * (1 - (-1 * extension));
+                    imgWidth = imgHeight * 0.6;
+                }
+            // Control condition
+            } else {
+                if (orderedOrientations[index][1] === 0) {
+                    // Landscape
+                    imgWidth = witty / 2;
+                    imgHeight = imgWidth * 0.5;            		
+                } else {
+                    // Portrait
+                    imgHeight = hitty / 2;
+                    imgWidth = imgHeight * 0.6;
+                }
+            }
+
+            // Populates the images' (and their frames'/borders') coordinates, based on `witty` and `hitty` (i.e., the dimensions of the viewer window)
+            imgX = (witty / 2 - imgWidth / 2);
+            imgY = (hitty / 2 - imgHeight / 2);
+
+            // Sets the thickness of the frame/image border at 1.5% of `hitty` (i.e., 1.5% the height of the viewer window)
+            borderThickness = hitty * 0.015;
+
+            // For the experimental condition, alters `borderThickness`, based on `extension`. So, for instance, if the joystick has been pulled toward the user, the frame/image border will appear 'closer' to them
+            if (condition === 1) {
+                borderThickness = borderThickness * (1 - (-1 * extension));
+            // For the control condition, shifts the x coordinate of the images and their frames/borders, based on `extension`. So, for instance, if the joystick has been tilted all to the right, the image and its frame/border will 'shift' to the right of the window
+            } else {
+                imgX = imgX + extension / 2 * witty;
+            }
+
+            // Transforms `borderThickness` to a string appended by "px", making it a valid D3 input
+            borderThickness = borderThickness + "px";
+
+            // Sets `textSize` to 5% of `hitty` (i.e., 5% the height of the viewer window; N.B. used to be 2.5%), transforms it to a string appended by "px", making it a valid D3 input
+            textSize = hitty * 0.05 + "px";//25 + "px";
+
+            // Sets `outputAlreadyGenerated` to false
+            outputAlreadyGenerated = false;
+        }
+
+        function readyPanel() {
+        /*
+            Instantiates a canvas with width and height equal to the viewer window, ready to be written to by D3 methods.
+        */
+            $("#joyDisplay").html("");
+
+            panel = d3.select("#joyDisplay")
+            					.append("svg")
+                      .attr("width", witty)
+                      .attr("height", hitty);
+        }
+
+        function getPreambleText() {
+        /*
+            Returns text appropriate to the current value of `preambleIndex`.
+
+            In other words, gets the right instructions ready to the display to the user during the preamble.
+        */
+            // Sets the per-orientation movement instructions, based on `condition`
+            if (condition === 1) {
+                var landscapeText = "FORWARD.";
+                var portraitText = "BACKWARD.";
+            } else {
+                var landscapeText = "LEFT.";
+                var portraitText = "RIGHT.";
+            }
+
+            // Returns the right instruction strings for each of the preamble 'pages', appending movement instructions as necessary
+            switch (preambleIndex) {
+                case 0: // The initial screen
+                    return ["Welcome to the task."];
+                case 1: // The screen instructing users how to respond to landscape frames/image borders
+                    return ["When the frame appears like this, move the joystick " + landscapeText, 
+                            "Please respond as quickly and accurately as you can."];
+                case 2: // The screen instructing users how to respond to portrait frames/image borders
+                    return ["When the frame appears like this, move the joystick " + portraitText, 
+                            "Please respond as quickly and accurately as you can."];
+                case 3: // The screen instructing users what will happen if the perform an incorrect response
+                    return ["If you make a mistake, a red 'X' will appear.", 
+                            "You will need to return the joystick to its resting position and respond again."];
+                case 4: // The screen immediately preceding the practice trials
+                    return ["Let's practice a few."];
+                case 13: // The screen immediately preceding the actual trials
+                    return ["Great job! We'll move on to the training proper when you're ready.",
+                            "","","","","",
+                            "If you feel distressed at any point,","please don't hesitate to stop."];
+            }
+        }
+
+        function placePreambleFigure() {
+            if (preambleIndex === 3) {
+                // Red X
+                panel.append("text")
+                     .text("X")
+                     .attr("text-anchor", "middle")
+                     .style("font-size", hitty / 3 + "px")
+                     .style("fill", "red")
+                     .style("font-family", "sans-serif")
+                     .attr("x", witty / 2)
+                     .attr("y", hitty / 1.5);
+
+                return;
+            } else if (condition === 1) {
+                if (preambleIndex === 1) {
+                    // Up arrow
+                    var arrow = "M 50 50 L 60 80 L 40 80 L 50 50";
+                } else {
+                    // Down arrow
+                    var arrow = "v";
+                }
+            } else {
+                if (preambleIndex === 1) {
+                    // Left arrow
+                    var arrow = "<";
+                } else {
+                    // Right arrow
+                    var arrow = ">";
+                }
+            }
+
+            panel.append("circle")
+            		 .attr("cx", witty / 2 + witty / 16 * side)
+                 .attr("cy", hitty / 2)
+                 .attr("r", "5px")
+                 .style("fill", cir[cirIndex]);
+
+            if (cirIndex === 1) {side = 1; cirIndex = 0;} else {side = -1; cirIndex = 1;}
+        }
+
+        // these are placeholders for the potential instruction gif
+        var cir = ["green", "red"];
+        var cirIndex = 0;
+        var side = -1;
+
+        function instruct() {
+        /*
+            A sequence of D3 append calls plot the instruction text and (if necessary) example frames/image borders.
+        */
+            var text = getPreambleText();
+
+            // Plots every line in `text`, incrementing the y coordinate by 5% of `hitty` times the index of the current line in `text` (i.e., shifting each line down the window by 5% of the viewer window height)
+            for (var i = 0; i < text.length; i ++) {
+                panel.append("text")
+                     .text(text[i])
+                     .attr("text-anchor", "middle")
+                     .style("font-size", textSize)
+                     .attr("x", witty / 2)
+                     .attr("y", hitty * 0.1 + hitty * 0.05 * i);	
+            }
+
+            // Plots a frame/image border or error when this function is called during the practice trials
+            switch (preambleIndex) {
+                // Landscape
+                case 1:
+                    panel.append("rect")
+                         .attr("x", witty / 3)
+                         .attr("y", hitty * 0.4)
+                         .attr("width", witty / 3)
+                         .attr("height", witty / 6)
+                         .style("fill", "black")//"white")
+                         .style("stroke", "black")
+                         .style("stroke-width", borderThickness);
+                    break;
+                // Portrait
+                case 2:
+                    panel.append("rect")
+                         .attr("x", witty / 2 - hitty / 4 * 0.6)
+                         .attr("y", hitty / 4)
+                         .attr("width", hitty / 2 * 0.6)
+                         .attr("height", hitty / 2)
+                         .style("fill", "black")//"white")
+                         .style("stroke", "black")
+                         .style("stroke-width", borderThickness);
+
+        						// Plots the 'return' text at the bottom of the viewer window
+                    panel.append("text")
+                         .text("Press the delete key to return.")
+                         .attr("text-anchor", "middle")
+                         .style("font-size", textSize)
+                         .attr("x", witty / 2)
+                         .attr("y", hitty * 0.95);
+                    break;
+                case 3:
+                    // Red X
+                    panel.append("text")
+                         .text("X")
+                         .attr("text-anchor", "middle")
+                         .style("font-size", (hitty / 3) + "px")
+                         .style("fill", "red")
+                         .style("font-family", "sans-serif")
+                         .attr("x", witty / 2)
+                         .attr("y", hitty / 1.5);
+
+                    // Plots the 'return' text at the bottom of the viewer window
+                    panel.append("text")
+                         .text("Press the delete key to return.")
+                         .attr("text-anchor", "middle")
+                         .style("font-size", textSize)
+                         .attr("x", witty / 2)
+                         .attr("y", hitty * 0.95);
+
+        						break;
+                case 4:
+                  	// Plots the 'return' text at the bottom of the viewer window
+                    panel.append("text")
+                         .text("Press the delete key to return.")
+                         .attr("text-anchor", "middle")
+                         .style("font-size", textSize)
+                         .attr("x", witty / 2)
+                         .attr("y", hitty * 0.95);
+
+            }
+
+          	// Plots the 'continue' text at the bottom of the viewer window
+            panel.append("text")
+                 .text("Press the spacebar to continue.")
+                 .attr("text-anchor", "middle")
+                 .style("font-size", textSize)
+                 .attr("x", witty / 2)
+                 .attr("y", hitty * 0.9);
+        }
+
+        function getImage() {
+        /*
+            During the practice trials: 
+                Returns an empty string (so no image will be plotted) after altering `imgWidth`, `imgHeight`, and `instruction`, based on `preambleIndex`.
+
+            During the actual trials: 
+                Returns the next image in `imageSequence` << if i make this lol, based on the stimulus type in the current tuple of `orderedOrientations`.
+        */
+            if (checkPreambleTrials()) {
+                // The practice trials alternate between portrait and landscape orientations (4 of each)
+                if (preambleIndex % 2 === 0) {
+                    // Landscape
+                    imgWidth = (witty / 2);
+
+                    // In the experimental condition, changes `imgWidth`, based on `extension` ('shrinking' the plotted figures if the joystick is pushed; 'growing' the plotted figures if the joystick is pulled)
+                    if (condition === 1) {
+                    		imgWidth = imgWidth * (1 - (-1 * extension));
+                    }
+
+                    // As above, but for `imgHeight` and in both conditions
+                    imgHeight = imgWidth * 0.5;            	
+
+                    // Sets `instruction` appropriately for each condition
+                    if (condition === 1) {
+                        instruction = "Push";
+                    } else {
+                        instruction = "Left";
+                    }
+                } else {
+                    // Portrait
+                    imgHeight = (hitty / 2);
+
+                    // In the experimental condition, changes `imgWidth`, based on `extension` ('shrinking' the plotted figures if the joystick is pushed; 'growing' the plotted figures if the joystick is pulled)
+                    if (condition === 1) {
+                         imgHeight = imgHeight * (1 - (-1 * extension));
+                    }
+
+                    // As above, but for `imgHeight` and in both conditions
+                    imgWidth = imgHeight * 0.6;
+
+                    // Sets `instruction` appropriately for each condition
+                    if (condition === 1) {
+                        instruction = "Pull";
+                    } else {
+                        instruction = "Right";
+                    }
+                }
+
+                // Sets the image coordinates, based on `witty`, `hitty`, `imgWidth`, and `imgHeight` (i.e., centres the plotted figures in the viewer window)
+                imgX = witty / 2 - imgWidth / 2;
+                imgY = hitty / 2 - imgHeight / 2;
+
+                // In the control condition, changes `imgX`, based on `extension` (so that the plotted figures will `move` across the viewer window)
+                if (condition === 0) {
+                    imgX = imgX + extension / 2 * witty;
+                }
+
+                return "";
+            }
+
+            return /* window.location.href.slice(0, window.location.href.lastIndexOf("/") + 1) + */ images[orderedOrientations[index][0]][0];
+        }
+
+        function trial() {
+        /*
+            Plots the images and their frames/borders within the viewer window. 
+        */
+            // Fetches the images and, for the practice trials, changes the dimensions and locations of the rectangle to a predetermined sequence
+            picture = getImage();
+
+            // Plots the frame/image border
+            panel.append("rect")
+                 .attr("x", imgX - imgWidth * 0.05)
+                 .attr("y", imgY - imgHeight * 0.05)
+                 .attr("width", Math.max(0, imgWidth + imgWidth * 0.1))
+                 .attr("height", Math.max(0, imgHeight + imgHeight * 0.1))
+                 .style("fill", "black")//"white")
+                 .style("stroke", "black")
+                 .style("stroke-width", borderThickness);
+
+            // Plots the image (in the experimental trials; plots nothing in the practice trials)
+            panel.append("image")
+                 .attr("x", imgX)
+                 .attr("y", imgY)
+		 .attr("xlink:href",picture.src)
+                 .attr("width", Math.max(0, imgWidth))
+                 .attr("height", Math.max(0, imgHeight));
+
+            if (checkPreambleTrials()) {
+                if (condition === 1) {
+                    // Sets `textSize` for `instruction`
+                    textSize = hitty * 0.1 * (1 - (-1 * extension)) + "px";
+
+                    // Sets `imgX` appropriately (so that the instruction text will remain centred in the viewer window)
+                    imgX = witty / 2;
+                } else {
+                    // Sets `textSize` for `instruction`
+                    textSize = hitty * 0.1 + "px";
+
+                    // Sets `imgX` appropriately (so that the instruction text will 'move' across the viewer window)
+                    imgX = witty / 2 + extension / 2 * witty;
+                }
+
+                // Sets `imgY` such that the instruction text will be in the centre of the viewer window
+                imgY = hitty / 2;
+
+                // Plots the instruction text
+                panel.append("text")
+                     .text(instruction)
+                     .attr("text-anchor", "middle")
+                     .style("alignment-baseline", "central")
+                     .style("fill", "white")
+                     .style("font-size", textSize)
+                     .attr("x", imgX)
+                     .attr("y", imgY);
+            }
+
+            //*************************************************************
+            //*************************************************************
+            //*************************************************************
+            /*panel.append("text")
+                 .text("Index: " + 
+                 		index + 
+                    " Presentation orientation: " + 
+                    orderedOrientations[index][1] + 
+                    "; type: " + 
+                    orderedOrientations[index][0] + 
+                    " Size of bin: " + 
+                    orderedOrientations.length + 
+                    " Bin range: " + 
+                    binRange + 
+                    " Session complete: " + 
+                    sessionComplete)
+                 .attr("x", 30)
+                 .attr("y", 30)*/
+            //*************************************************************
+            //*************************************************************
+            //*************************************************************
+        }
+
+        function generateOutput(correct) {
+        /*
+            Appends outputs for the current stimulus presentation to `reactions`, formatted ready to be written as a .json.	
+        */
+            var output = [];
+
+            if (orderedOrientations[index][0] === 0) {
+                output[0] = "\"Neutral\"";
+            } else {
+                output[0] = "\"Non-neutral\"";
+            }
+
+            if (orderedOrientations[index][1] === 0) {
+                output[1] = "\"Landscape\"";
+            } else {
+                output[1] = "\"Portrait\"";
+            }
+
+            if (correct) {
+                output[2] = "\"Correct\"";
+            } else {
+                output[2] = "\"Incorrect\"";
+            }
+
+            output[3] = "\"" + (responseTime - joyTimer) + "\"";
+
+            output[4] = "\"" + picture.src + "\"";
+
+            // If a reaction has already been recorded for the current stimulus (i.e, they got it wrong), append a new array within the same array containing the earlier reaction
+            if (typeof reactions[index] === "undefined") {
+                reactions[index] = [output];
+            } else {
+                reactions[index][reactions[index].length] = output;
+            }
+        }
+
+        function nextScreen() {
+        /*
+            When the absolute value of `extension` is met (i.e., the joystick is moved all the way forward or backward (for the experimental condition) or left or right (for the control condition)), increments `index` by one (i.e., proceeds to the next stimulus presentation) if the direction of movement was correct, else begins a counter that results in a large, red "X" being displayed in the viewer window, then returns to the same stimulus presentation.
+        */
+            // Refresh the panel
+            $("#joyDisplay").html("");
+
+            if (!checkPreambleTrials()) {            
+                // Checks if the direction of movement was correct for the current stimulus orientation
+                if ((extension / extensionAdjustment === -1 && orderedOrientations[index][1] === 0) || (extension / extensionAdjustment === 1 && orderedOrientations[index][1] === 1)) {
+                    // Right
+                    generateOutput(true);
+
+                    index ++;
+
+                    if (index === binRange * 2) {
+                    	sessionComplete = true;
+                    } else {
+                        // Drops the image that was just processed from the front of the stack
+                        images[orderedOrientations[index-1][0]] = images[orderedOrientations[index-1][0]].slice(1, images[orderedOrientations[index-1][0]].length);
+                    }
+
+                    // Holds further computations briefly, so that the window doesn't immediately plot the next stimulus
+                    sleep(250);
+                } else {
+                    // Wrong
+                    generateOutput(false);
+
+                    wrongCountdown = 200;
+                }
+            } else {
+                // As above, checks if the direction of movement was correct for the current practice trial
+                if ((extension / extensionAdjustment === -1 && preambleIndex % 2 === 0) || (extension / extensionAdjustment === 1 && preambleIndex % 2 === 1)) {
+                    // Right
+                    preambleIndex ++;
+
+                    // Hangs briefly (so that there's an interval between stimuli)
+                    sleep(250);
+                } else {
+                    // Wrong
+                    wrongCountdown = 200;
+                }
+            }
+        }
+
+        function writeOutputs() {
+            var jsonString = "{\"reactions\":[";
+
+            for (var i = 0; i < reactions.length; i ++) {
+                if (i > 0) {
+                    jsonString += ",";
+                }
+
+                jsonString += "{\"reaction\":[";
+
+                for (var j = 0; j < reactions[i].length; j ++) {
+                    if (j > 0) {
+                        jsonString += ",";
+                    }
+
+                    jsonString += "[" + reactions[i][j] + "]";
+                }
+
+                jsonString += "]}";
+            }
+
+            jsonString += "]}";
+
+            return jsonString;
+        }
+
+        function download(filename, text) {
+            var element = document.createElement('a');
+
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+
+            element.style.display = 'none';
+            document.body.appendChild(element);
+
+            element.click();
+
+            document.body.removeChild(element);
+        }
+
+        function endScreen() {
+        /*
+            When `index` reaches its maximum allowable value (i.e., the final trial has been completed), plots the text below at the top middle of the viewer window.
+        */
+            if (outputAlreadyWritten) {
+                endText = "Press Esc to minimise the window, then close it.";
+            } else {
+            	endText = "Great job!";
+            }		
+
+            $("#joyDisplay").html("");
+
+            panel = d3.select("#joyDisplay").append("svg")
+                                            .attr("width", witty)
+                                            .attr("height", hitty)
+                                            .append("text")
+                                            .text(endText)
+                                            .attr("text-anchor", "middle")
+                                            .attr("font-size", textSize)
+                                            .attr("x", witty / 2)
+                                            .attr("y", hitty / 2);
+
+            if (!outputAlreadyWritten) {
+                if (window.confirm("Please save the output.")) {
+                    var text = writeOutputs();
+                    var filename = "aat" + site + "_" + participantId + "_" + sessionNumber + ".txt";
+
+                    download(filename, text);
+
+                    outputAlreadyWritten = true;
+
+                    if (window.confirm("Are you ready to close the program?")) {
+                        window.close();
+                    } else {
+                        outputAlreadyWritten = false;
+                        return;
+                    }
+
+                    window.minimize();
+                }
+            }
+        }
+
+        function reportOnJoy() {
+        /*
+            This is the primary loop of the program, which calls all (or at least the parents of all) of the other functions:
+                1. If the program is currently in the preamble stage, each loop begins by:
+                    i. Checking whether `backupPreambleIndex` needs to be decremented and;
+                    ii. calling an eventListener to listen for space and delete key presses.
+                2. Next, if the user responded incorrectly to a trial:
+                    i. A large, red "X" is plotted and;
+                    ii. `wrongCountdown` is decremented and the function returns until the timer reaches 0. 
+                3. Then, a 'stop check' is performed, to see if the joystick has been moved all the way in a relevant direction. If so:
+                    i. `nextScreen` is called, to ascertain if the response was correct and react appropriately and;
+                    ii The function returns.
+                4. If the loop proceeds this far, `getVariables` is called, to populate everything appropriately;
+                5. Flushes the panel; 
+                6. The program's stop condition is checked after this point, as it relies on the values instantiated by step 4;
+                7. If the stop condition is not triggered, a check is made to ascertain whether the program is currently in the preamble stage. If so:
+                    i. `instruct` is called.
+                8. Else, the appropriate stimulus is presented, and the loop begins again.
+        */
+      			// Stop condition, triggered when `index` exceeds the index of `images`
+          	if (sessionComplete) {            
+                endScreen();           
+
+                return;
+            }
+
+            // Checking if the space key has been hit for each page of the instructions
+            // Done this way because the event listener stuff is absolute garbage
+            if (checkPreamble()) {
+                fixPreambleBackup();
+                listenForKeys();
+            }
+
+            // Will plot a large, red "X" for an arbitrary length of time
+            if (wrongCountdown > 0) {
+                $("#joyDisplay").html("");
+
+                panel = d3.select("#joyDisplay").append("svg")
+                                                .attr("width", witty)
+                                                .attr("height", hitty)
+                                                .append("text")
+                                                .text("X")
+                                                .attr("text-anchor", "middle")
+                                                .style("font-size", hitty / 3 + "px")
+                                                .style("fill", "red")
+                                                .style("font-family", "sans-serif")
+                                                .attr("x", witty / 2)
+                                                .attr("y", hitty / 1.5);
+
+                // Decrement the timer
+                wrongCountdown --;
+
+                return;
+            }
+
+            // Stop check for each image
+            // Navigator is called each time as Chrome drops it every refresh
+            if (Math.abs(extension / extensionAdjustment) === 1) {
+                responseTime = performance.now();
+
+                if (!outputAlreadyGenerated) {
+                    nextScreen();
+
+                    outputAlreadyGenerated = true;
+                } 
+
+                if (Math.abs(navigator.getGamepads()[0].axes[condition]) > 0.1) {
+                    return;
+                }
+            }
+
+            if (outputAlreadyGenerated) {
+                // Reset the timer for the next presentation
+                joyTimer = performance.now();
+            }
+
+            // Populate the variables based on current joystick axis, viewer window size, etc.
+            getVariables();
+
+            // Clear plotted output
+            readyPanel();
+
+            // Tell the user what to do, during the preamble
+            if (checkPreamble()) {
+                instruct();
+
+                return;
+            }
+
+            // Present the next stimulus
+            trial();
+        }
+
+        // Container for reaction times, etc
+        var reactions = [];
+
+        var outputAlreadyGenerated = false;
+        var outputAlreadyWritten = false;
+
+        // Container for stimuli to be presented to the user
+        var images;
+
+        // Stimuli already presented
+        var presentedImages = [];
+        
+        // `index` is, as might be expected, used as an index -- for finding the right image and orientation, as well as writing the user's reaction times, etc
+        var index = 0;
+
+        // Boolean flag to end session
+        var sessionComplete = false;
+
+        // To contain the start and end timestamp for each presentation
+        var joyTime;
+        var responseTime;
+
+        var nDupes = 3; // should be (final number of images (per type) desired - number of images selected from rating) / 10
+        
+        var allocations = ['control','experimental','control','control','experimental','control','experimental','experimental','control','experimental','control','control','control','control','experimental','experimental','control','control','experimental','control','experimental','control','experimental','control','experimental','experimental','experimental','control','experimental','control','experimental','experimental','control','experimental','experimental','control','experimental','experimental','experimental','experimental','control','experimental','experimental','experimental','control','control','control','experimental','experimental','control','control','control','experimental','control','experimental','control','experimental','experimental','experimental','experimental','control','control','experimental','control','experimental','control','control','experimental','control','experimental','control','experimental','experimental','experimental','control','control','control','control','control','experimental','control','control','experimental','control','control','control','control','experimental','control','experimental','experimental','experimental','experimental','control','experimental','experimental','control','control','experimental','control'];
+
+        // Used in a number of checks for image orientation and position
+        var condition = 1;//Number(prompt("What condition? 0 for control; 1 for experimental: "));
+
+        // Pretty self-explanatory
+        var site = "TEST";
+        
+        var participantId;
+
+        // binRange is the number of presentations per stimulus type
+        // (e.g., if binRange is 100, there will be a TOTAL of 200 presentations)
+        var binRange = 40;
+
+        // Bins to be populated with tuples declaring the stimulus type and orientation; `orderedOrientations` with the tuples in a random order
+        var orientations = [];
+        var orderedOrientations = [];
+
+        // To contain random indices of `orientations` during randomisation of its tuples' order
+        var rand;
+
+        // To contain the gamepad object
+        var joy;
+
+        // To contain the extension of the relevant axis of `joy`
+        var extension;
+
+        // `extensionAdjustment` is used to alter the effect of `extension` on a number of parameters;
+        var extensionAdjustment = 1.3;
+
+        // To contain the width and height of the viewer window, respectively
+        var witty,
+            hitty;
+
+        // To contain the svg object to which all D3 elements will be plotted
+        var panel;
+
+        // To contain a list of instruction strings
+        var instruction;
+
+        // To contain the path to an image, for each stimulus presentation
+        var picture;
+
+        // To contain the dimensions and coordinates, respectively, of an image and its frame/border
+        var imgWidth,
+            imgHeight,
+            imgX,
+            imgY;
+
+        // To contain the width of a frame's/image border's stroke
+        var borderThickness;
+
+        // To contain the font size of a string to be plotted
+        var textSize;
+
+        // Repopulated true when a gamepad is found
+        var hasJoy = false;
+
+        // To contain the repeating loop ??? Do better with this description
+        var repJoy;
+
+        // Each index of this will be set to true as the user 'pages' through the instructions
+        // Implemented this way to allow for backtracking
+        var preamble = [false,false,false,false,false];
+
+        // To contain the current and previous state of the preamble, respectively
+        // Implemented this way to prevent multiple decrements on a single key press
+        var preambleIndex = 0;
+        var backupPreambleIndex;
+	var sessionNumber;
+
+        // To be set to a non-zero integer value if the user responds incorrectly to a trial
+        var wrongCountdown = 0;
+
+	var data;
+                
+        $("#imageInput").on("change", function() {
+            // Instantiates and randomises the order of a list of tuples containing each stimulus presentation's type (neutral or non-neutral) and orientation (landscape or portrait)
+            setOrder();
+            orderedOrientations = randomiseOrder(orientations);
+
+            console.log(orderedOrientations);
+
+            addReversedBlock();
+
+            console.log("Reversed block:");
+            console.log(orderedOrientations);
+            
+            var fileReader = new FileReader();
+            
+            fileReader.readAsText($('#imageInput').prop('files')[0]);
+
+            participantId = Number($('#imageInput').prop('files')[0].name.slice(0, $('#imageInput').prop('files')[0].name.indexOf('_')));
+            
+            console.log(participantId);
+
+            fileReader.onload = function () {
+                data = fileReader.result;  // data <-- in this var you have the file data in Base64 format
+
+                images = JSON.parse(data);
+
+		console.log("hi guys");
+
+		images = duplicateImages(images);                
+
+		for (let i = 0; i < 2; i++) {
+	                for (let el in images[i]) {
+                	    let src = images[i][el];
+        	            images[i][el] = new Image();
+	                    images[i][el].src = src;
+                	}
+		}
+                
+                for (i=0; i<images.length; i++) {
+                    images[i] = randomiseOrder(images[i]);
+                };
+            };
+            
+            d3.select("#imageInput").remove();
+            
+            sessionNumber = Number(prompt("Enter the session number: "));
+            
+           // Remind the user that the joystick needs to be plugged in, and that it needs to be moved to be captured
+            alert("Please make sure the joystick is plugged in (and give it a wiggle so it can be captured).")
+
+            // Fire fullscreen and hide cursor requests on any keypress
+            addEventListener("keydown", function() { 
+                    // Fullscreen request
+                var el = document.documentElement,
+                    rfs = el.requestFullscreen 
+                        || el.webkitRequestFullScreen
+                        || el.mozRequestFullScreen
+                        || el.msRequestFullscreen;
+
+                rfs.call(el);
+
+                // Hide cursor request
+                document.body.requestPointerLock();
+            });
+
+            // Run
+            $(document).ready(function() {
+                console.log(window.location.href)
+
+                if (canJoy) {
+                    $(window).on("gamepadconnected", function() {
+                        hasJoy = true;
+                        $("#joyPrompt").html("");
+                        console.log("Gamepad connected.");
+                        repJoy = window.setInterval(reportOnJoy, 0.001);
+                    });
+
+                    $(window).on("gamepaddisconnected", function() {
+                        console.log("Gamepad disconnected.");
+                        $("#joyPrompt").text("Joystick disconnected.");
+                        window.clearInterval(repJoy);
+                    });
+
+                    // Interval for Chrome
+                    var checkJoy = window.setInterval(function() {
+                        console.log("checkGP");
+                        if(navigator.getGamepads()[0]) {
+                            if(!hasJoy) $(window).trigger("gamepadconnected");
+                            window.clearInterval(checkJoy);
+                        }
+                    }, 100);
+                }
+            }); 
+        });
+    </script>
+    </body>
+</html>
